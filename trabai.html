@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Snake IA — Kelvin</title>
+<style>
+  :root{
+    --bg:#eef2ff;
+    --panel:#ffffff;
+    --accent:#0f172a;
+    --muted:#6b7280;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    background:var(--bg);
+    font-family:system-ui,Segoe UI,Roboto,Arial;
+    height:100vh;
+    display:flex;
+    justify-content:center;
+    align-items:center;
+  }
+  .wrap{
+    width:460px;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+  }
+  .hud{
+    margin-bottom:15px;
+    background:rgba(255,255,255,0.92);
+    backdrop-filter:blur(6px);
+    padding:12px 24px;
+    border-radius:14px;
+    box-shadow:0 6px 20px rgba(0,0,0,0.1);
+    display:flex;
+    gap:40px;
+    align-items:center;
+    justify-content:center;
+    width:100%;
+    max-width:460px;
+  }
+  .label{
+    font-size:14px;
+    color:var(--muted);
+  }
+  .label strong{color:var(--accent)}
+  #controls{
+    margin-top:14px;
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    background:rgba(255,255,255,0.92);
+    padding:10px 16px;
+    border-radius:12px;
+    box-shadow:0 4px 12px rgba(0,0,0,0.08);
+    width:100%;
+    max-width:460px;
+  }
+  #controls label{
+    display:flex;
+    align-items:center;
+    gap:6px;
+  }
+  #speed{
+    margin-left:8px;
+    flex:1;
+  }
+  button{
+    border:none;
+    background:#0f172a;
+    color:#fff;
+    padding:8px 14px;
+    border-radius:8px;
+    cursor:pointer;
+  }
+  canvas{
+    display:block;
+    width:400px;
+    height:400px;
+    background:#fff;
+    border-radius:10px;
+    box-shadow:inset 0 0 0 1px rgba(0,0,0,0.06);
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="hud">
+    <div class="label">Status: <strong id="status">Pronto</strong></div>
+    <div class="label">Passos: <strong id="steps">0</strong></div>
+  </div>
+
+  <canvas id="board" width="400" height="400"></canvas>
+
+  <div id="controls">
+    <label class="label">Velocidade
+      <input id="speed" type="range" min="40" max="260" step="10" value="120">
+    </label>
+
+    <label class="label">
+      <input id="showPaths" type="checkbox"> Ver caminhos
+    </label>
+
+    <button id="pause">Pausar</button>
+  </div>
+
+</div>
+
+<script>
+const canvas=document.getElementById('board');
+const ctx=canvas.getContext('2d');
+ctx.imageSmoothingEnabled=false;
+const GRID=20;
+const TILE=canvas.width/GRID;
+let speedMs=120;
+let snake=[];
+let apple=null;
+let running=true;
+let steps=0;
+let cachedPath=[];
+let animFrom=null,animTo=null,animProgress=0,lastTime=0;
+let triedTail=false;
+let showPaths=document.getElementById('showPaths');
+const statusEl=document.getElementById('status');
+const stepsEl=document.getElementById('steps');
+
+const key=p=>`${p.x},${p.y}`;
+const equal=(a,b)=>a.x===b.x&&a.y===b.y;
+const inside=p=>p.x>=0&&p.x<GRID&&p.y>=0&&p.y<GRID;
+
+function resetGame(){
+  snake=[{x:10,y:10},{x:9,y:10},{x:8,y:10}];
+  cachedPath=[];animProgress=0;
+  animFrom={...snake[0]};animTo={...snake[0]};
+  steps=0;
+  triedTail=false;
+  spawnApple();
+  updateUI();
+  draw();
+}
+
+function spawnApple(){
+  if(snake.length>=GRID*GRID) return;
+  while(true){
+    const p={x:Math.floor(Math.random()*GRID),y:Math.floor(Math.random()*GRID)};
+    if(!snake.some(s=>equal(s,p))){apple=p;return;}
+  }
+}
+
+function getBodyColor(i,total){
+  const start=[20,20,180],end=[120,120,220];
+  const t=i/(total-1);
+  const r=Math.round(start[0]+(end[0]-start[0])*t);
+  const g=Math.round(start[1]+(end[1]-start[1])*t);
+  const b=Math.round(start[2]+(end[2]-start[2])*t);
+  return `rgb(${r},${g},${b})`;
+}
+
+function draw(){
+  ctx.clearRect(0,0,400,400);
+  ctx.fillStyle="#fff";
+  ctx.fillRect(0,0,400,400);
+
+  if(showPaths.checked && cachedPath){
+    ctx.fillStyle="rgba(0,120,255,0.3)";
+    cachedPath.forEach(p=>{
+      ctx.fillRect(p.x*TILE+4,p.y*TILE+4,TILE-8,TILE-8);
+    });
+  }
+
+  ctx.fillStyle="#ef4444";
+  ctx.fillRect(apple.x*TILE+2,apple.y*TILE+2,TILE-4,TILE-4);
+
+  for(let i=1;i<snake.length;i++){
+    ctx.fillStyle=getBodyColor(i,snake.length);
+    const p=snake[i];
+    ctx.fillRect(p.x*TILE+2,p.y*TILE+2,TILE-4,TILE-4);
+  }
+
+  ctx.fillStyle="#001040";
+  let hx,hy;
+  if(animTo&&animProgress<1){
+    hx=animFrom.x+(animTo.x-animFrom.x)*animProgress;
+    hy=animFrom.y+(animTo.y-animFrom.y)*animProgress;
+  } else {
+    hx=snake[0].x;hy=snake[0].y;
+  }
+  ctx.fillRect(hx*TILE+2,hy*TILE+2,TILE-4,TILE-4);
+}
+
+function neighbors(p){return[
+  {x:p.x,y:p.y-1},{x:p.x,y:p.y+1},
+  {x:p.x-1,y:p.y},{x:p.x+1,y:p.y}
+].filter(inside);}
+
+function manhattan(a,b){return Math.abs(a.x-b.x)+Math.abs(a.y-b.y);}
+
+function aStar(start,goal,bodySet){
+  const open=new Map(),closed=new Set(),pq=[];
+  const gk=key(goal);
+  function push(n){open.set(key(n.pos),n);pq.push(n);}
+  function pop(){pq.sort((a,b)=>a.f-b.f);const n=pq.shift();if(n)open.delete(key(n.pos));return n;}
+  push({pos:start,g:0,f:manhattan(start,goal),prev:null});
+  while(pq.length){
+    const cur=pop();if(key(cur.pos)===gk){
+      const path=[];let c=cur;while(c.prev){path.push(c.pos);c=c.prev;}return path.reverse();
+    }
+    closed.add(key(cur.pos));
+    for(const nb of neighbors(cur.pos)){
+      const k=key(nb);
+      if(closed.has(k))continue;
+      if(bodySet.has(k)&&k!==gk)continue;
+      const g=cur.g+1,f=g+manhattan(nb,goal),e=open.get(k);
+      if(!e||g<e.g)push({pos:nb,g,f,prev:cur});
+    }
+  }
+  return null;
+}
+
+function bfsReach(start,target,bodySet){
+  const q=[start],seen=new Set([key(start)]);
+  while(q.length){
+    const c=q.shift();if(equal(c,target))return true;
+    for(const nb of neighbors(c)){
+      const k=key(nb);
+      if(seen.has(k)||bodySet.has(k))continue;
+      seen.add(k);q.push(nb);
+    }
+  }
+  return false;
+}
+
+// Caminhos quase seguros mais permissivos: permite até 1 passo sem risco imediato
+function isSafe(path){
+  let sim=snake.map(p=>({...p}));
+  let a={...apple};
+  let safeSteps=0;
+  for(const st of path){
+    sim.unshift({...st});
+    if(equal(st,a)) a=null; else sim.pop();
+    safeSteps++;
+    const body=new Set(sim.slice(0,-1).map(p=>key(p)));
+    if(!bfsReach(sim[0], sim[sim.length-1], body)) break;
+  }
+  return safeSteps>=1;
+}
+
+function decidePath(){
+  const head=snake[0];
+  const body=new Set(snake.map(s=>key(s)));
+  const cands=[];
+
+  let main=aStar(head,apple,body);
+  if(main) cands.push(main);
+
+  for(let i=0;i<4;i++){
+    const alt=aStar(head,apple,body);
+    if(alt){
+      const sig=alt.map(p=>key(p)).join('|');
+      if(!cands.some(c=>c.map(p=>key(p)).join('|')===sig)) cands.push(alt);
+    }
+  }
+
+  const safe=cands.filter(isSafe);
+  if(safe.length){safe.sort((a,b)=>a.length-b.length);return safe[0];}
+
+  // Segue a cauda se necessário, limite quase total do grid
+  const tail=snake[snake.length-1];
+  const t=aStar(head,tail,body);
+  if(t && !triedTail && t.length<GRID*GRID*0.9){ triedTail=true; return t; }
+
+  // Fallback: vizinho livre mais próximo da apple
+  const freeNeighbors=neighbors(head).filter(n=>!snake.some(s=>equal(s,n)));
+  if(freeNeighbors.length){
+    freeNeighbors.sort((a,b)=>manhattan(a,apple)-manhattan(b,apple));
+    return [freeNeighbors[0]];
+  }
+
+  return null;
+}
+
+function stepTick(dt){
+  if(!running) return;
+  if(animTo && animProgress<1){
+    animProgress+=dt/speedMs;
+    if(animProgress>=1){
+      animProgress=1;
+      snake.unshift({...animTo});
+      if(equal(animTo,apple)) spawnApple(); else snake.pop();
+      steps++; updateUI();
+      animFrom={...snake[0]}; animTo=null; animProgress=0;
+    }
+    draw(); return;
+  }
+  if(cachedPath.length===0){
+    const p=decidePath();
+    if(!p){ handleDeath(); return; }
+    cachedPath=p.slice();
+  }
+  const next=cachedPath.shift();
+  if(!inside(next) || snake.some(s=>equal(s,next))){ cachedPath=[]; return; }
+  animFrom={...snake[0]}; animTo={...next}; animProgress=0;
+  draw();
+}
+
+function handleDeath(){
+  running=false; triedTail=false;
+  statusEl.textContent="Morreu";
+  animTo=null; animFrom=null; cachedPath=[];
+  setTimeout(()=>{ resetGame(); running=true; statusEl.textContent="Rodando"; },350);
+}
+
+function updateUI(){
+  statusEl.textContent=running?"Rodando":"Pausado";
+  stepsEl.textContent=steps;
+}
+
+function loop(t){
+  if(!lastTime) lastTime=t;
+  const dt=t-lastTime; lastTime=t;
+  stepTick(dt);
+  requestAnimationFrame(loop);
+}
+
+document.getElementById('pause').onclick=()=>{running=!running;updateUI();};
+document.getElementById('speed').oninput=e=>{
+  const val=parseInt(e.target.value);
+  speedMs=300-val;
+};
+
+resetGame();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
